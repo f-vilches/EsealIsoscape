@@ -33,6 +33,7 @@ library("ggspatial")
 library(viridis)
 library(ggpubr)
 library(glmmTMB)
+library("MuMIn")
 
 Isotopes = read.csv("NESE_Isoscape_IsotopeData (R).csv", sep=";") # load csv file
 
@@ -171,7 +172,7 @@ DriftRate=DiveType_allseals %>%
           filter(abs(DriftRate - mean(DriftRate)) <= 3 * sd(DriftRate)) %>% #eliminate all data points that are more than >3 SD from the mean
           group_by(SealID,DateWhenSegmentGrew) %>% 
           summarize(DriftRate=mean(DriftRate)) %>%
-          mutate(FiveDayDriftRate = rollapply(DriftRate, width = 5, FUN = mean, align = "center", fill = NA)) #Reduce the dataframe to a mean drift rate per day and then to one drift rate every 5 days by calculating a 3-day centered moving average for each seal
+          mutate(FiveDayDriftRate = rollapply(DriftRate, width = 5, FUN = mean, align = "center", fill = NA)) #Reduce the dataframe to a mean drift rate per day and then to one drift rate every 5 days by calculating a 5-day centered moving average for each seal
 
 #For each DateWhenSegmentGrew (in df IsotopesWithLatLon), assign the corresponding drift rate (in df DriftRate):
 
@@ -228,42 +229,43 @@ pairs(d15N ~ Lat+Lon360+FiveDayDriftRate,data=IsotopesLatLonDriftRepr,panel=pane
 
 #Plot isotope values versus time since deployment
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=d13C)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=SevenDayAvg_d13C)) +
   geom_line(size=.8) +
   facet_wrap(~ SealID) +
   theme_classic()
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=d15N)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=SevenDayAvg_d15N)) +
   geom_line(size=.8) +
   facet_wrap(~ SealID) +
   theme_classic()
 
 #Plot isotope values versus lat, lon, drift by seal
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d13C, color=SealID)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=dSevenDayAvg_13C, color=SealID)) +
   geom_point() +
   stat_smooth(method="lm") +
+  facet_wrap(~SealID) +
   theme_few()
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d13C, color=SealID)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=SevenDayAvg_d13C, color=SealID)) +
   geom_point() +
   stat_smooth(method="lm", alpha=0.2) +
   facet_wrap(~SealID) +
   theme_few()
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d15N, color=SealID)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=SevenDayAvg_d15N, color=SealID)) +
   geom_point() +
   stat_smooth(method="lm") +
   facet_wrap(~SealID) +
   theme_few() #Para lat, mostly flat or negative slope
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=d15N, color=SealID)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=SevenDayAvg_d15N, color=SealID)) +
   geom_point() +
   stat_smooth(method="lm") +
   facet_wrap(~SealID) +
   theme_few() #Para lon, casi todas las seals tienen pendiente +
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d15N, color=SealID)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=SevenDayAvg_d15N, color=SealID)) +
   geom_point() +
   stat_smooth(method="lm", alpha=0.2) +
   #facet_wrap(~SealID) +
@@ -271,7 +273,7 @@ ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d15N, color=SealI
 
 #Plot isotope values versus reproductive state
 
-ggplot(data=IsotopesLatLonDriftRepr, aes(x=ReprState, y=d13C))+
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=ReprState, y=SevenDayAvg_d13C))+
   geom_boxplot()+ 
   geom_jitter(height=0, color='black', fill='grey50', shape=21, alpha= 0.2)+ #alpha changes the transparency
   theme_classic()
@@ -289,7 +291,7 @@ IsotopesLatLonDriftRepr = IsotopesLatLonDriftRepr[complete.cases(IsotopesLatLonD
 
 #Test assumptions:
 
-LMM_full_Carbon = lmer(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| SealID), 
+LMM_full_Carbon = lmer(SevenDayAvg_d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| SealID), 
                        data = IsotopesLatLonDriftRepr); summary(LMM_full_Carbon)
 
   #Test normality
@@ -300,22 +302,20 @@ LMM_full_Carbon = lmer(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| Se
 
 #Normal QQ plot, has a heavy tail, so a linear model with a brm function and a student distribution is more appropiate:
 
-LMM_full_Carbon_brm2 = brm(d13C~Lon360 + FiveDayDriftRate + ReprState + (Lat| SealID),
-                           data = IsotopesLatLonDriftRepr,family = student); summary(LMM_full_Carbon_brm2);beep(3); fixef(LMM_full_Carbon_brm2) #prints more digits for easier viewing
+LMM_full_Carbon_brm2 = brm(SevenDayAvg_d13C~Lon360 + FiveDayDriftRate + ReprState + (Lat| SealID),
+                           data = IsotopesLatLonDriftRepr,family = student); summary(LMM_full_Carbon_brm2);beep(3); fixef(LMM_full_Carbon_brm2) #prints more digits for easier viewing; #chain and iter are the default, but check that they should be 4 and 2000, respectively
 
-IsotopesLatLonDriftRepr2 <- IsotopesLatLonDriftRepr %>% 
-  mutate(across(c(Lon360, Lat),
-                list(\(x) (x - mean(x)) / sd(x)))) #When the scale of the predictors is so different from the scale of the rest of the values, the model has it easier and does a better job if the big values are rescaled. Not used right now, though
-
-LMM_full_Carbon_brm3= brm(d13C ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lon360 + Lat + FiveDayDriftRate | SealID), 
+LMM_full_Carbon_brm3= brm(SevenDayAvg_d13C ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lon360 + Lat + FiveDayDriftRate | SealID), 
                           data = IsotopesLatLonDriftRepr,
                           family = student,
-                          chains = 4, iter = 2000); beep(1); summary(LMM_full_Carbon_brm3); fixef(LMM_full_Carbon_brm3) #chain should be 4, iter should be 2000
+                          chains = 4, iter = 2000); beep(1); summary(LMM_full_Carbon_brm3); fixef(LMM_full_Carbon_brm3) 
 
-LMM_full_Carbon_glmm= glmmTMB(d13C ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat | SealID), 
+LMM_full_Carbon_glmm= glmmTMB(SevenDayAvg_d13C ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat | SealID), 
                           data = IsotopesLatLonDriftRepr,
                           family = t_family); 
                           summary(LMM_full_Carbon_glmm); fixef(LMM_full_Carbon_glmm) 
+
+install.packages("lme4", type = "source")
 
 autoplot(LMM_full_Carbon_glmm) #all diagnostic plots
 par(mfrow=c(2,2))
@@ -448,7 +448,7 @@ carbon_pred_overall_lon <- carbon_pred_long %>%
 
 #Test assumptions
 
-LM_full_Nitro= lm(d15N~Lat + Lon360 + FiveDayDriftRate + ReprState, 
+LM_full_Nitro= lm(SevenDayAvg_d15N~Lat + Lon360 + FiveDayDriftRate + ReprState, 
              data=IsotopesLatLonDriftRepr); summary(LM_full_Nitro) #Fit the model
 
   #test normal distribution of residuals; normal distribution is not met
@@ -459,9 +459,9 @@ LM_full_Nitro= lm(d15N~Lat + Lon360 + FiveDayDriftRate + ReprState,
   
   #Log de data to try make it normal
   IsotopesLatLonDriftRepr= IsotopesLatLonDriftRepr %>%
-    mutate(logd15N=log(d15N))
+    mutate(logSevenDayAvg_d15N=log(SevenDayAvg_d15N))
   
-  LM_full_Nitro_log= lm(logd15N~Lat + Lon360 + FiveDayDriftRate + ReprState, 
+  LM_full_Nitro_log= lm(logSevenDayAvg_d15N~Lat + Lon360 + FiveDayDriftRate + ReprState, 
                     data=IsotopesLatLonDriftRepr); summary(LM_full_Nitro_log) #Fit the model with log-transformed response
   
   plot(density(resid(LM_full_Nitro_log))) #close to bell shape, has a bump on the right side
@@ -475,21 +475,21 @@ IsotopesLatLonDriftRepr= IsotopesLatLonDriftRepr %>%
          LonRescaled= scale(Lon360)) 
 
 #Fit the model:
-GLMM_full_Nitro = glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState  + (LatRescaled + LonRescaled + FiveDayDriftRate| SealID),
+GLMM_full_Nitro = glmer(SevenDayAvg_d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState  + (LatRescaled + LonRescaled + FiveDayDriftRate| SealID),
                         family = Gamma (link='log'),
                         control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=2e4)),
                         data = IsotopesLatLonDriftRepr); 
                         summary(GLMM_full_Nitro)
 
-LMM_full_Nitro_log= lmer(logd15N~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| SealID), 
+LMM_full_Nitro_log= lmer(logSevenDayAvg_d15N~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| SealID), 
                       data=IsotopesLatLonDriftRepr); summary(LMM_full_Nitro_log)
 
-LMM_full_Nitro_brm= brm(d15N ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat + Lon360 + FiveDayDriftRate | SealID), 
+LMM_full_Nitro_brm= brm(SevenDayAvg_d15N ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat + Lon360 + FiveDayDriftRate | SealID), 
                           data = IsotopesLatLonDriftRepr,
                           family = student,
                           chains = 4, iter = 2000); beep(1); summary(LMM_full_Nitro_brm); fixef(LMM_full_Nitro_brm)
 
-LMM_full_Nitro_brm2= brm(d15N ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat + Lon360 + FiveDayDriftRate | SealID), 
+LMM_full_Nitro_brm2= brm(SevenDayAvg_d15N ~ Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat + Lon360 + FiveDayDriftRate | SealID), 
                         data = IsotopesLatLonDriftRepr,
                         family = Gamma (link= "log"),
                         chains = 4, iter = 2000); beep(1); summary(LMM_full_Nitro_brm2); fixef(LMM_full_Nitro_brm2) #Parts of the model have not converged (some Rhats are > 1.05). Be careful when analysing the results! We recommend running more iterations and/or setting stronger priors. 
@@ -524,6 +524,13 @@ nitro_pred_overall_lon <- nitro_pred_long %>%
             d15N_upr = quantile(d15N, 0.975)) %>% 
   rename(d15N = d15N_mean) #Calculate the model's predicted mean and prediction intervals for longitude for plotting 
 
+nitro_pred_overall_lon2 <- nitro_pred_overall_lon %>%
+  mutate(
+    d15N = exp(d15N),
+    d15N_lwr = exp(d15N_lwr),
+    d15N_upr = exp(d15N_upr),
+  ) #do exp() of model output to make same scale as observed
+
 #Calcs for plotting the nitrogen model LMM_full_Nitro_brm:
 
 prediction_grid_nitro <- expand_grid(
@@ -554,16 +561,18 @@ nitro_pred_overall_lat <- nitro_pred_long %>%
 #***For CARBON----
 
 CarbonVsLat= (ggplot(data=carbon_pred_overall_lat, aes(x=Lat, y=d13C)) + # raw data
-  geom_point(data= IsotopesLatLonDriftRepr, size= 4, alpha=0.5 , show.legend = FALSE, aes(color = SealID)) +  # prediction interval
+  geom_point(data= IsotopesLatLonDriftRepr, size= 4, alpha=0.5 , show.legend = FALSE, aes(x=Lat, y=SevenDayAvg_d13C, color = SealID)) +  
   scale_color_viridis(discrete=TRUE, option="turbo") +
-  geom_ribbon(aes(ymin = d13C_lwr, ymax = d13C_upr), alpha = 0.1) + # mean of posterior prediction
-  geom_line(linewidth = 2) +
+  geom_ribbon(aes(ymin = d13C_lwr, ymax = d13C_upr), alpha = 0.1) + # prediction interval
+  stat_smooth(data= IsotopesLatLonDriftRepr, method="lm", se=FALSE, aes(color=SealID)) + # slope of each seal; "se" as false to hide confidence intervals
+  geom_line(linewidth = 2) + # mean of posterior prediction
   labs(x="Latitude (degrees)", y=bquote("Carbon isotope values, δ" ^13~"C"~"(‰)")) +
   theme_few()) +
   theme(axis.text=element_text(size=18),
-        axis.title=element_text(size=24)); CarbonVsLat
+        axis.title=element_text(size=24),
+        legend.position="none"); CarbonVsLat
 
-CarbonVsLon= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=d13C)) + #Not plotting the model's line nor prediction intervals bc the relationship was non-significant
+CarbonVsLon= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=SevenDayAvg_d13C)) + #Not plotting the model's line nor prediction intervals bc the relationship was non-significant
                 # raw data
                 geom_point(data= IsotopesLatLonDriftRepr, size= 4, alpha=0.5 , show.legend = FALSE, aes(color = SealID)) +
                 # prediction interval
@@ -573,18 +582,12 @@ CarbonVsLon= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=d13C)) + #Not
                 theme(axis.text=element_text(size=18),
                       axis.title=element_text(size=24)); CarbonVsLon
 
-#CarbonVsDrift= ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d13C, color=SealID)) +
-  geom_point(size= 2, alpha=0.6 , show.legend = FALSE) +
-  scale_color_viridis(discrete=TRUE, option="turbo") +
-    labs(x="Drift rate (m/s)", y=bquote("Carbon isotope values, δ" ^13~"C"~"(‰)")) +
-  theme_few(); CarbonVsDrift
-
 IsotopeRelation_All= ggarrange(CarbonVsLat, CarbonVsLon, NitroVsLat,NitroVsLon,
                                ncol = 2, nrow = 2) #Combine carbon plots
 
 #***For NITROGEN----
 
-NitroVsLat= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d15N)) + #Not plotting the model's line nor prediction intervals bc the relationship was non-significant
+NitroVsLat= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=SevenDayAvg_d15N)) + #Not plotting the model's line nor prediction intervals bc the relationship was non-significant
                geom_point(data= IsotopesLatLonDriftRepr, size= 4, alpha=0.6 , show.legend = FALSE, aes(color = SealID)) + # prediction interval
                scale_color_viridis(discrete=TRUE, option="turbo") +
                labs(x="Latitude (degrees)", y=bquote("Nitrogen isotope values, δ" ^15~"N"~"(‰)")) +
@@ -592,7 +595,7 @@ NitroVsLat= (ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d15N)) + #Not plo
                theme(axis.text=element_text(size=18),
                      axis.title=element_text(size=24)); NitroVsLat
 
-NitroVsLon= (ggplot(data=nitro_pred_overall_lon, aes(x=Lon360, y=d15N)) + #raw data
+NitroVsLon= (ggplot(data=nitro_pred_overall_lon2, aes(x=Lon360, y=SevenDayAvg_d15N)) + #raw data
                geom_point(data= IsotopesLatLonDriftRepr, size= 4, alpha=0.6 , show.legend = FALSE, aes(color = SealID)) + # prediction interval
                scale_color_viridis(discrete=TRUE, option="turbo") +
                geom_ribbon(aes(ymin = d15N_lwr, ymax = d15N_upr), alpha = 0.1) + # mean of posterior prediction
@@ -616,16 +619,16 @@ states=map_data("state") #states data
 
 # ***For CARBON----
 
-assign_range = function(d13C) { #function to group isotope values into ranges to better visualize them on the map
+assign_range = function(SevenDayAvg_d13C) { #function to group isotope values into ranges to better visualize them on the map
   range_limits = c(-19, -18.5, -18, -17.5, -17)
   
-  if (d13C >= range_limits[1] && d13C <= range_limits[2] ) { #assign ranges based on the limits
+  if (SevenDayAvg_d13C >= range_limits[1] && SevenDayAvg_d13C <= range_limits[2] ) { #assign ranges based on the limits
     return("Low")
-  } else if (d13C > range_limits[2] && d13C <= range_limits[3]) {
+  } else if (SevenDayAvg_d13C > range_limits[2] && SevenDayAvg_d13C <= range_limits[3]) {
     return("Low-medium")
-  } else if (d13C > range_limits[3] && d13C <= range_limits[4]) {
+  } else if (SevenDayAvg_d13C > range_limits[3] && SevenDayAvg_d13C <= range_limits[4]) {
     return("Medium")
-  } else if (d13C > range_limits[4] && d13C <= range_limits[5]) {
+  } else if (SevenDayAvg_d13C > range_limits[4] && SevenDayAvg_d13C <= range_limits[5]) {
     return("Medium-high")
   } else {
     return("High")
@@ -652,14 +655,14 @@ carbon_map=ggplot()+
 
 # ***For NITROGEN----
 
-assign_range = function(d15N) { #function to group isotope values into ranges to better visualize them on the map
+assign_range = function(SevenDayAvg_d15N) { #function to group isotope values into ranges to better visualize them on the map
   range_limits = c(11, 12.5, 14, 15.5, 17)
   
-  if (d15N >= range_limits[1] && d15N < range_limits[2] ) { #assign ranges based on the limits
+  if (SevenDayAvg_d15N >= range_limits[1] && SevenDayAvg_d15N < range_limits[2] ) { #assign ranges based on the limits
     return("Low")
-  } else if (d15N >= range_limits[2] && d15N < range_limits[3]) {
+  } else if (SevenDayAvg_d15N >= range_limits[2] && SevenDayAvg_d15N < range_limits[3]) {
     return("Medium")
-  } else if (d15N >= range_limits[3] && d15N < range_limits[4]) {
+  } else if (SevenDayAvg_d15N >= range_limits[3] && SevenDayAvg_d15N < range_limits[4]) {
     return("Medium-high")
   } else {
     return("High")

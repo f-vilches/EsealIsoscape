@@ -1,0 +1,18 @@
+SEALS DROPPED FROM THE BLS ANALYSIS;;;;;;;;;;;;;
+Because they are non-nubbins and the estimation of T0 using the growth model does not make sense (i.e., over a year between estimated T0 and RecoveryDate);;;;;;;;;;;;;
+;;;;;;;;;;;;;
+SealID;e;;Linf;Lrec;^;K;Partial result;RecDate;RecDate;T0;T0;;True deployment dates
+X822;2,72;-2,05;9,83;8,6;0,92;0,01566;-132,6829;1/16/2016;16816;16683;5-Sep-15;;
+5430;2,72;-2,05;9,83;9,8;0,92;0,01566;-369,7508;1/23/2016;16823;16453;18-ene-2015;;
+X 58;2,72;-2,05;12,45;12,6;0,92;0,01246;-388,6307;1/25/2016;16825;16436;18-ene-2015;;
+5055;2,72;-2,05;10,49;10,4;0,92;0,01476;-322,4887;2/1/2016;16832;16510;15-Mar-15;;
+B 66;2,72;-2,05;11,63;11,7;0,92;0,01334;-1219,5985;2/7/2021;18665;17445;15-Feb-20;;
+9838;2,72;-2,05;14,41;15;0,92;0,01062;-1556,3728;2/6/2021;18664;17108;22-Oct-19;;
+6564;2,72;-2,05;14,41;14,5;0,92;0,01095;-1505,4637;1/31/2019;17927;16422;2-Nov-17;;
+;;;;;;;;;;;;;
+SEALS KEPT FOR THE ANALYSIS WITH ACTUAL, KNOWN T0 ;;;;;;;;;;;;;
+T0 was calculated here using the model, to see how off from true T0 the resulting estimations are;;;;;;;;;;;;;
+SealID;e;;Linf;Lrec;^;K;Partial result;RecDate;RecDate;T0;T0;;True deployment dates
+PM695;2,72;-2,05;16,29;17,6;0,92;0,00916;-1820,4999;2/24/2019;17951;16131;8-ago2017;;12-Jun-18
+7019;2,72;-2,05;14,41;14;0,92;0,01102;-323,1181;1/31/2019;17927;17604;13-Mar-18;;4-Jun-18
+3190;2,72;-2,05;9,83;8,2;0,92;0,007613809;-114,7083;1/23/2015;16458;16343;30-Sep-14;16222;1-Jun-14

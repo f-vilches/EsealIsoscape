@@ -2,13 +2,13 @@
 
 #Project: Northern elephant seals Isoscapes
 #Writer: Florencia Vilches
-#Last modified: 6 Feb 2024
+#Last modified: 17 Feb 2024
 
 #read in R packages 
 library("ggplot2")
 library("ggfortify")	
 library("lubridate")
-library("mapdata")
+library("mapdata") #package for pulling out map data
 library("RColorBrewer")
 library("reshape2")
 library("xts")
@@ -18,7 +18,6 @@ library(tidyverse)
 require("httr")
 require("ncdf4") 
 require("sp")
-library(mapdata) #package for pulling out map data
 library(lme4)
 library(zoo)
 library(here) 
@@ -28,6 +27,10 @@ library("car")
 library("brms")
 library("bayesplot")
 library("optimx")
+library("ggthemes")
+library("beepr")
+library("egg")
+
 
 Isotopes = read.csv("NESE_Isoscape_IsotopeData (R).csv", sep=";") # load csv file
 
@@ -220,34 +223,48 @@ pairs(d15N ~ Lat+Lon360+FiveDayDriftRate,data=IsotopesLatLonDriftRepr,panel=pane
 
 #Plot isotope values versus time since deployment
 
-ggplot(data=IsotopesLatLon, aes(x=DaysSinceDeployment, y=d13C)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=d13C)) +
   geom_line(size=.8) +
   facet_wrap(~ SealID) +
   theme_classic()
 
-ggplot(data=IsotopesLatLon, aes(x=DaysSinceDeployment, y=d15N)) +
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=DaysSinceDeployment, y=d15N)) +
   geom_line(size=.8) +
   facet_wrap(~ SealID) +
   theme_classic()
 
-#Plot isotope values versus lat and lon by seal
+#Plot isotope values versus lat, lon, drift by seal
 
-ggplot(data=IsotopesLatLon, aes(x=Lat, y=d13C, color=SealID)) +
-  geom_line(size=.8) +
-  theme_classic()
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d13C, color=SealID)) +
+  geom_point() +
+  stat_smooth(method="lm") +
+  theme_few()
 
-ggplot(data=IsotopesLatLon, aes(x=Lat, y=d15N, color=SealID)) +
-  geom_line(size=.8) +
-  theme_classic()
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d13C, color=SealID)) +
+  geom_point() +
+  stat_smooth(method="lm") +
+  theme_few()
+
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lon360, y=d15N, color=SealID)) +
+  geom_point() +
+  stat_smooth(method="lm") +
+  facet_wrap(~SealID) +
+  theme_few() #Para lon, casi todas las seals tienen pendiente +
+
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d15N, color=SealID)) +
+  geom_point() +
+  stat_smooth(method="lm") +
+  facet_wrap(~SealID) +
+  theme_few() #Para DR, ~ proporciones de +, - y nula
 
 #Plot isotope values versus reproductive state
 
-ggplot(data=IsotopesLatLon, aes(x=ReprState, y=d13C))+
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=ReprState, y=d13C))+
   geom_boxplot()+ 
   geom_jitter(height=0, color='black', fill='grey50', shape=21, alpha= 0.2)+ #alpha changes the transparency
   theme_classic()
 
-ggplot(data=IsotopesLatLon, aes(x=ReprState, y=d15N))+
+ggplot(data=IsotopesLatLonDriftRepr, aes(x=ReprState, y=d15N))+
   geom_boxplot()+ 
   geom_jitter(height=0, color='black', fill='grey50', shape=21, alpha= 0.2) +
   theme_classic()
@@ -322,136 +339,107 @@ ggplot()+labs(y= "Latitude (deg)", x = "lonitude (deg)")+
 
 #*Fit a Linear mixed effect model----
 
-IsotopesLatLonDriftRepr = IsotopesLatLonDriftRepr[complete.cases(IsotopesLatLonDriftRepr$FiveDayDriftRate, IsotopesLatLonDriftRepr$Lon360, IsotopesLatLonDriftRepr$ReprState),] #remove any rows with missing values in the FiveDayDriftRate, Lon360, and ReprState columns, which ensures that all the models below are fitted to the same subset of the data and thus the BIC function can be used to calculate the BIC values for each model
+IsotopesLatLonDriftRepr = IsotopesLatLonDriftRepr[complete.cases(IsotopesLatLonDriftRepr$FiveDayDriftRate, IsotopesLatLonDriftRepr$Lon360, IsotopesLatLonDriftRepr$ReprState),] #remove any rows with missing values in the FiveDayDriftRate, Lon360, and ReprState columns, which ensures that all the models below are fitted to the same subset of the data
 
-#**Carbon----
+#**For CARBON----
 
-LMM_full_Carbon = lmer(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + 
-                   FiveDayDriftRate*Lat+ FiveDayDriftRate*Lon360 + FiveDayDriftRate*ReprState + 
-                  (1| SealID), 
+#*Fit the model:
+
+LMM_full_Carbon = lmer(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + (1| SealID), 
                   data = IsotopesLatLonDriftRepr); summary(LMM_full_Carbon)
 
-#The least significant two-way interaction is Lon360*DriftRate, cut: 
-LMM_2_Carbon = update(LMM_full_Carbon,~. -FiveDayDriftRate:Lon360); summary(LMM_2_Carbon) #Full model minus an interaction
+#Test assumptions:
 
-#The least significant two-way interaction is DriftRate*ReprState, cut: 
-LMM_3_Carbon = update(LMM_2_Carbon,~. -FiveDayDriftRate:ReprState); summary(LMM_3_Carbon) 
+shapiro.test(resid(LMM_full_Carbon)) #not normal
+plot(LMM_full_Carbon) #plot the residuals
+qqnorm(residuals(LMM_full_Carbon)) 
+qqline(residuals(LMM_full_Carbon)) 
 
-#The remaining two-way interaction is non-significant Lat*FiveDayDriftRate, cut: 
-LMM_4_Carbon = update(LMM_3_Carbon,~. -Lat:FiveDayDriftRate); summary(LMM_4_Carbon) 
+#Normal QQ plot, has a heavy tail, so a linear model with a brm function and a student distribution is more appropiate:
 
-#The most non-significant relationship is with Lon360, cut: 
-LMM_5_Carbon = update(LMM_4_Carbon,~. -Lon360); summary(LMM_5_Carbon) 
+LMM_full_Carbon_brm2 = brm(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + (Lat| SealID),
+                           data = IsotopesLatLonDriftRepr,family = student); summary(LMM_full_Carbon_brm2);beep(3); fixef(LMM_full_Carbon_brm2) #prints more digits for easier viewing
 
-#The most non-significant relationship is with Lon360, cut: 
-LMM_6_Carbon = update(LMM_5_Carbon,~. -ReprState); summary(LMM_6_Carbon) 
+#Assess model's predicting abilities:
 
-AIC(LMM_full_Carbon, LMM_2_Carbon, LMM_3_Carbon, LMM_4_Carbon, LMM_5_Carbon, LMM_6_Carbon)
-BIC(LMM_full_Carbon, LMM_2_Carbon, LMM_3_Carbon, LMM_4_Carbon, LMM_5_Carbon, LMM_6_Carbon)
-
-#Test assumptions
-shapiro.test(resid(LMM_6_Carbon)) #test normality of residuals
-plot(LMM_6_Carbon) #plot the residuals
-qqnorm(residuals(LMM_6_Carbon)) #Normal QQ plot
-qqline(residuals(LMM_6_Carbon))
-
-LMM_full_Carbon_brm = brm(d13C~Lat + Lon360 + FiveDayDriftRate + ReprState + 
-                         FiveDayDriftRate*Lat+ FiveDayDriftRate*Lon360 + FiveDayDriftRate*ReprState + 
-                         (1| SealID), 
-                       data = IsotopesLatLonDriftRepr); summary(LMM_full_Carbon_brm)
-
-LMM_Lat_Carbon_brm = brm(d13C~Lat + 
-                          (1| SealID), 
-                          data = IsotopesLatLonDriftRepr); summary(LMM_Lat_Carbon_brm)
-
-loo(LMM_full_Carbon_brm, LMM_Lat_Carbon_brm)
-
-bayesplot_grid(
-  pp_check(LMM_full_Carbon_brm, type= "stat", stat="mean"), 
-  pp_check(LMM_Lat_Carbon_brm, type= "stat", stat="mean"))
+bayesplot_grid(pp_check(
+  LMM_full_Carbon_brm2, type= "stat", stat="mean")) #observed mean (black) relative to the means from simulated data (blue) plugged into the model
   
-bayesplot_grid(
-  pp_check(LMM_full_Carbon_brm, ndraws=50), 
-  pp_check(LMM_Lat_Carbon_brm, ndraws=50))
+bayesplot_grid(pp_check(
+  LMM_full_Carbon_brm2, ndraws=50)) #density of observed responses (black) relative to the density of responses from simulated data (blue) plugged into the model
 
-#**Nitrogen----
+#**For NITROGEN----
 
-GLMM_full_Nitro = glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState +                   FiveDayDriftRate*LatRescaled + FiveDayDriftRate*LonRescaled + FiveDayDriftRate*ReprState + 
-                          (1| SealID),
-                        family = Gamma,
-                        data = IsotopesLatLonDriftRepr, glmerControl(optCtrl = list(maxit = 1e9, maxfun = 1e9))); summary(GLMM_full_Nitro) # Bump the maximum number of function evaluations from the default 50 to try get rid of the "Model failed to converge" warning
+#Rescale predictors to get rid of the very large eigenvalue: 
 
-#Model spitted the warnings about rescaling and failed to converge; below are things to try to get rid of them 
-
-  ##Rescale predictors
-
-IsotopesLatLonDriftRepr= IsotopesLatLonDriftRepr %>%
+IsotopesLatLonDriftRepr= IsotopesLatLonDriftRepr %>%  
   mutate(LatRescaled= scale(Lat),
          LonRescaled= scale(Lon360)) 
-  
-  ##Iterate through all possible (g)lmer optimizers and find one that converges. Maxfun sets the maximum number of iterations
 
-diff_optims = allFit(GLMM_full_Nitro, maxfun = 5e5) 
+#Fit the model:
 
-sim <- function(nsub = 2, nclust = 3, sigma_residual2 = 1,  sig_b2 = c(.3, 10), betas = c(0,1)){
-  narm <- 2                                     
-  n <- nsub * nclust * narm                     
-  y <- rep_len(NA, n)
-  arm <- rep(0:(narm-1), each = nsub*nclust)
-  clustid <- rep(1:(nclust*narm), each = nsub)
-  clustRE <- rep(rnorm(narm*nclust, mean = 0, sd = rep(sqrt(sig_b2), each = nclust)), each = nsub)
-  sig_b2 <- rep(sig_b2, each = nclust*nsub)
-  error <- rnorm(n, mean = 0, sd = sqrt(sigma_residual2))
-  beta <- rep(betas, each = nclust*nsub)
-  y <- beta + clustRE + error
-  return(cbind.data.frame(arm, clustid, sig_b2, clustRE, error, beta, y))
-}
+GLMM_full_Nitro = glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState  + (1| SealID),
+                        family = Gamma (link='log'),
+                        data = IsotopesLatLonDriftRepr); 
+                        summary(GLMM_full_Nitro)
 
-diff_optims_OK = diff_optims[sapply(diff_optims, is, "merMod")] 
-lapply(diff_optims_OK, function(x) x@optinfo$conv$lme4$messages) # After itirating, check for convergence flags. Result NULL means there are no convergence warnings in the fitted model with that optimizer.
+#Extract the fixed effects coefficients (slopes) and convert them from the log link scale to the response scale:
 
-  #loop through some of optimx’s optimizer choices AND the better optimizer settings
+fixed_effects= fixef(GLMM_full_Nitro); slopes_response_scale= exp(fixed_effects); print(slopes_response_scale) 
 
-optimx_options <- c("L-BFGS-B", "nlminb", "nlm", "bobyqa", "nmkb", "hjkb") 
-for(i in 1:length(optimx_options)){
-  print(paste0("Testing optimx: ", optimx_options[i]))
-  model_flex <- glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState +                   FiveDayDriftRate*LatRescaled + FiveDayDriftRate*LonRescaled + FiveDayDriftRate*ReprState + 
-                        (1| SealID),
-                      family = Gamma,
-                      data = IsotopesLatLonDriftRepr, glmerControl(optimizer = "optimx", optCtrl = list(method = optimx_options[i],
-                                                                                                        maxit = 1e9)))
-  if(is.null(model_flex@optinfo$conv$lme4$messages)){
-    print(paste0("One of the optimx options, ", optimx_options[i],", worked!"))
-    print(model_flex)
-    break
-  }
-}
+#Create “new data” data frame
+nd2=data.frame(LatRescaled=rep(-3:4, times=23), LonRescaled=rep(-3:4, times=23),FiveDayDriftRate=rep(-3:4, times=23), ReprState=rep(c("Pregnant","Non-pregnant"),each=184), SealID="3190")
 
-  #The nloptwrap set of optimizers is a little easier to use, because it uses the same option control formatting as the default. It also has a large (20+) set of algorithm options, and it’s easy to cycle through them in a for loop to find one that might work, all with the customized settings that you want.
+#Add predicted values
+nd2$pred_nitro=predict(GLMM_full_Nitro,newdata=nd2,type="response", re.form=NA)
 
-algoptions <- c("NLOPT_LN_PRAXIS", "NLOPT_GN_CRS2_LM",
-                "NLOPT_LN_COBYLA", "NLOPT_LN_NEWUOA",
-                "NLOPT_LN_NEWUOA_BOUND", "NLOPT_LN_NELDERMEAD",
-                "NLOPT_LN_SBPLX", "NLOPT_LN_BOBYQA")
+#Generate confidence intervals: 
+nd2$Nitro_link=predict(GLMM_full_Nitro,newdata=nd2,re.form=NA,type="link") #predict mean values on link/log scale
+pf1 = function(fit) {   predict(fit, nd2) } #function for bootstrapping
+bb=bootMer(GLMM_full_Nitro,nsim=50,FUN=pf1,seed=69) #bootstrap to estimate uncertainty in predictions
+nd2$SE= apply(bb$t, 2, sd) #Calculate Ses from bootstrap samples on link scale
+nd2$d15N= exp(nd2$Nitro_link) #predicted mean values on response scale
+nd2$pSE= exp(nd2$Nitro_link+nd2$SE) #predicted mean + 1 SE on response scale
+nd2$mSE= exp(nd2$Nitro_link-nd2$SE) # predicted mean - 1 SE on response scale
 
-for(i in 1:length(algoptions)){
-  print(paste0("Testing nloptwrap: ", algoptions[i]))
-  model_flex <- glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState +                   FiveDayDriftRate*LatRescaled + FiveDayDriftRate*LonRescaled + FiveDayDriftRate*ReprState + 
-                        (1| SealID),
-                      family = Gamma,
-                      data = IsotopesLatLonDriftRepr,
-                      control = glmerControl(optimizer = "nloptwrap",
-                                             optCtrl = list(algorithm = algoptions[i],
-                                                            maxfun = 1e9,
-                                                            maxeval = 1e7,
-                                                            xtol_abs = 1e-9,
-                                                            ftol_abs = 1e-9)))
-  if(is.null(model_flex@optinfo$conv$lme4$messages)){
-    print(paste0("One of the nloptwrap options, ", algoptions[i],", worked!"))
-    print(model_flex)
-    break
-  }
-}
+ggplot(data=IsotopesLatLonDriftRepr,aes(x=LonRescaled,y=d15N,color=SealID)) +
+         geom_point(size=3)+ 
+         geom_ribbon(data=nd2,aes(x=LonRescaled,ymin=mSE,ymax=pSE,color=SealID), alpha=0.1, linetype=0)+
+         theme_few()+
+         geom_line(data=nd2,aes(x=LonRescaled,y=d15N,color=SealID))+
+         labs(x = "LonRescaled",y="δ15N")
+
+#Fit a second model, with DR as a random effect:
+
+GLMM_full_Nitro2 = glmer(d15N~LatRescaled + LonRescaled + FiveDayDriftRate + ReprState  + (FiveDayDriftRate|SealID),
+                        family = Gamma (link='log'),
+                        data = IsotopesLatLonDriftRepr); 
+                        summary(GLMM_full_Nitro2)
+
+#Extract the fixed effects coefficients (slopes) and convert them from the log link scale to the response scale: 
+fixed_effects= fixef(GLMM_full_Nitro2); slopes_response_scale= exp(fixed_effects); print(slopes_response_scale) 
+
+#*Actual figures----
+
+#**For CARBON----
+
+CarbonVsLat= ggplot(data=IsotopesLatLonDriftRepr, aes(x=Lat, y=d13C, color=SealID)) +
+  geom_point(size= 1, show.legend = FALSE) +
+  stat_smooth(method="lm", alpha = 0.07, linewidth= 0.6, show.legend = FALSE, aes(fill=SealID)) + # Change the color of the confidence intervals to blue) + #plot the model and confidence intervals
+  labs(x="Latitude (degrees)", y=bquote("Carbon isotope values, δ" ^13~"C"~"(‰)")) +
+  theme_few(); CarbonVsLat
+
+CarbonVsDrift= ggplot(data=IsotopesLatLonDriftRepr, aes(x=FiveDayDriftRate, y=d13C, color=SealID)) +
+  geom_point(size= 1, show.legend = FALSE) +
+  stat_smooth(method="lm", alpha = 0.06, linewidth= 0.6, show.legend = FALSE, aes(fill=SealID)) + # Change the color of the confidence intervals to blue) + #plot the model and confidence intervals
+   labs(x="Drift rate (m/s)", y=bquote("Carbon isotope values, δ" ^13~"C"~"(‰)")) +
+  theme_few(); CarbonVsDrift
+
+IsotopeRelation= ggarrange(CarbonVsLat, CarbonVsDrift, 
+                           ncol = 2, nrow = 1) #Combine carbon plots
+
+#**For NITROGEN----
+
 
 
 #*Test assumptions----IGNORE
@@ -462,24 +450,3 @@ shapiro.test(resid(lmCarbonLat)) #test normal distribution of residuals; normal 
 lmtest::bptest(lmCarbonLat) # test constant variance of residuals; constant variance is met
 dwtest(lmCarbonLat) # formal test for independence of residuals (Durbin Watson Test; H0: autocorrelation does not exist, H1: autocorrelation exists) 
 pacf(resid(lmCarbonLat)) # graph test for independence of residuals  - autocorrelation exists
-
-#Carbon Vs lon
-lmCarbonlon= lm(d13C~lon, data=IsotopesLatLon);summary(lmCarbonlon) #Fit the model
-shapiro.test(resid(lmCarbonlon)) #test normal distribution of residuals; normal distribution is not met
-lmtest::bptest(lmCarbonlon) # test constant variance of residuals; constant variance is met
-dwtest(lmCarbonlon) # formal test for independence of residuals (Durbin Watson Test; H0: autocorrelation does not exist, H1: autocorrelation exists) 
-pacf(resid(lmCarbonlon)) # graph test for independence of residuals  - autocorrelation exists
-
-#Nitro Vs Lat
-lmNitroLat= lm(d15N~Lat, data=IsotopesLatLon);summary(lmNitroLat) #Fit the model
-shapiro.test(resid(lmNitroLat)) #test normal distribution of residuals; normal distribution is not met
-lmtest::bptest(lmNitroLat) # test constant variance of residuals; constant variance is met
-dwtest(lmNitroLat) # formal test for independence of residuals (Durbin Watson Test; H0: autocorrelation does not exist, H1: autocorrelation exists) 
-pacf(resid(lmNitroLat)) # graph test for independence of residuals  - autocorrelation exists
-
-#Nitro Vs lon
-lmNitrolon= lm(d15N~lon, data=IsotopesLatLon);summary(lmNitrolon)  #Fit the model
-shapiro.test(resid(lmNitrolon)) #test normal distribution of residuals; normal distribution is not met
-lmtest::bptest(lmNitrolon) # test constant variance of residuals; constant variance is not met
-dwtest(lmNitrolon) # formal test for independence of residuals (Durbin Watson Test; H0: autocorrelation does not exist, H1: autocorrelation exists) 
-pacf(resid(lmNitrolon)) # graph test for independence of residuals  - autocorrelation exists

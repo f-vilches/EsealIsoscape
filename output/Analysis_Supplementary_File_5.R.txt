@@ -1,0 +1,847 @@
+library(tidyverse)
+library(sjPlot)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+library(lsmeans)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(zoo)
+library(performance)
+library(ggeffects)
+
+setwd("E:/Nares expansion and breath variability/Paper/Revisions for PeerJ/Final Submission Docs/Revised Analysis Files")
+theme_set(theme_minimal())
+
+
+# Loading the data --------------------------------------------------------------------------------
+dat <- read_csv("E:/Nares expansion and breath variability/Paper/Revisions for PeerJ/Final Submission Docs/Revised Analysis Files/Raw Data Supplementary File 1.csv", 
+                   col_types = cols(assoc_divedur = col_time(format = "%H:%M:%S"),
+                                    following_divedur = col_time(format = "%H:%M:%S"),
+                                    follow_divedep = col_double(),
+                                    prev_divedur = col_time(format = "%H:%M:%S")))
+dat$species = parse_factor(dat$species, levels = c("mn", "bb"))
+dat$individualID <- factor(dat$individualID, levels = c("bb180304-45", "bb190224-52", "bb190228-55b", "bb190309-52", "mn161117-10", "mn180607-44"))
+
+dat <- dat %>% 
+  ungroup() %>%
+  group_by(individualID)%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE), #Normalize IA and max nares area
+         NMA = max_area / max(max_area, na.rm = TRUE))%>%
+  mutate(prev_divedur = as.numeric(prev_divedur, unit = "secs"), #change durations to number of seconds
+         following_divedur = as.numeric(following_divedur, unit = "secs")) %>%
+  ungroup()#calculates the normalized IA and normalized maximum nares area for each whale by dividing by the largest breath. 
+
+##Identifying where dives and IBIs diverge (depth and duration) -------------------------------------
+p <- dat %>% #duration
+  mutate(ibi = as.numeric(following_divedur, unit = "secs"))
+
+log_ibi_dens <- density(log(p$ibi), na.rm = TRUE)
+log_ibi_peaks <- pracma::findpeaks(log_ibi_dens$y)
+log_ibi_valley <- log_ibi_peaks[1,4]
+log_ibi_thr <- log_ibi_dens$x[log_ibi_valley]
+
+ggplot(p, aes(x = log(ibi)))+ 
+  geom_histogram(aes(y = ..density..), bins = 20) +
+  geom_density(color = "blue") +
+  geom_vline(xintercept = log_ibi_thr, color = "red")
+
+# Your IBI threshold is:
+ibi_thr <- exp(log_ibi_thr)
+ibi_thr
+
+##Classifying initial, middle, and terminal breaths using the minimum dive duration value distinguishing IBIs from dives --------------------------------------------------------------------------------------
+dat$breath_type = ifelse(dat$prev_divedur > 90, "Initial", ifelse(dat$following_divedur > 90, "Terminal", "Middle"))
+ 
+ #numbering the breath numbers and surface intervals
+dat$breath_n <- ifelse(dat$prev_divedur > 90, 1, 0)
+dat$breath_num <- ave(dat$breath_n, 
+                    cumsum(dat$breath_n == 1), 
+                    FUN = seq)
+dat <- dat %>%
+  group_by(individualID) %>%
+  mutate(surface_num = ifelse(breath_n == 1, cumsum(breath_n), NA))
+dat$surface_num <- na.locf(dat$surface_num)
+
+  ##Table 2 ---------------------------------------------------------------------------------------
+s <- dat %>%
+  group_by(individualID) 
+s$s_type <- ifelse(s$prev_divedur > 90, "Dive", "IBI")
+s <- s %>%
+  group_by(individualID, s_type) %>%
+  summarise(min = min(prev_divedur, na.rm = TRUE),
+            mean = mean(prev_divedur, na.rm = TRUE), 
+            sd = sd(prev_divedur, na.rm = TRUE),
+            max = max(prev_divedur, na.rm = TRUE), 
+            n = sum(!is.na(prev_divedur)))
+
+  #create a DF by whale 
+Mn44 = dat %>%
+  filter(individualID == "mn180607-44") %>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+Mn10 = dat %>% 
+  filter(individualID == "mn161117-10")%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+Bb55b = dat %>%
+  filter(individualID == "bb190228-55b")%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+Bb52 = dat %>%
+  filter(individualID == "bb190309-52")%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+Bb45 = dat %>%
+  filter(individualID == "bb180304-45")%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+Bb52b = dat %>%
+  filter(individualID == "bb190224-52")%>%
+  mutate(SIA = IA / max(IA, na.rm = TRUE))
+
+  #create a dataframe by whale for each breath type 
+Mn44.i = dat %>%
+  filter(individualID == "mn180607-44", breath_type == "Initial")
+Mn10.i = dat %>% 
+  filter(individualID == "mn161117-10", breath_type == "Initial")
+Bb55b.i = dat %>%
+  filter(individualID == "bb190228-55b", breath_type == "Initial")
+Bb52.i = dat %>%
+  filter(individualID == "bb190309-52", breath_type == "Initial")
+Bb45.i = dat %>%
+  filter(individualID == "bb180304-45", breath_type == "Initial")
+Bb52b.i = dat %>%
+  filter(individualID == "bb190224-52", breath_type == "Initial")
+
+Mn44.m = dat %>%
+  filter(individualID == "mn180607-44", breath_type == "Middle")
+Mn10.m = dat %>% 
+  filter(individualID == "mn161117-10", breath_type == "Middle")
+Bb55b.m = dat %>%
+  filter(individualID == "bb190228-55b", breath_type == "Middle")
+Bb52.m = dat %>%
+  filter(individualID == "bb190309-52", breath_type == "Middle")
+Bb45.m = dat %>%
+  filter(individualID == "bb180304-45", breath_type == "Middle")
+Bb52b.m = dat %>%
+  filter(individualID == "bb190224-52", breath_type == "Middle")
+
+Mn44.t = dat %>%
+  filter(individualID == "mn180607-44", breath_type == "Terminal")
+Mn10.t = dat %>% 
+  filter(individualID == "mn161117-10", breath_type == "Terminal")
+Bb55b.t = dat %>%
+  filter(individualID == "bb190228-55b", breath_type == "Terminal")
+Bb52.t = dat %>%
+  filter(individualID == "bb190309-52", breath_type == "Terminal")
+Bb45.t = dat %>%
+  filter(individualID == "bb180304-45", breath_type == "Terminal")
+Bb52b.t = dat %>%
+  filter(individualID == "bb190224-52", breath_type == "Terminal")
+
+        #Removes the NAs from each of the dataframes.
+Mn44.i = Mn44.i[!is.na(Mn44.i$IA),] 
+Mn44.m = Mn44.m[!is.na(Mn44.m$IA),]
+Mn44.t = Mn44.t[!is.na(Mn44.t$IA),]
+
+Mn10.i = Mn10.i[!is.na(Mn10.i$IA),]
+Mn10.m = Mn10.m[!is.na(Mn10.m$IA),]
+Mn10.t = Mn10.t[!is.na(Mn10.t$IA),]
+
+Bb55b.i = Bb55b.i[!is.na(Bb55b.i$IA),]
+Bb55b.m = Bb55b.m[!is.na(Bb55b.m$IA),]
+Bb55b.t = Bb55b.t[!is.na(Bb55b.t$IA),]
+
+Bb52.i = Bb52.i[!is.na(Bb52.i$IA),]
+Bb52.m = Bb52.m[!is.na(Bb52.m$IA),]
+Bb52.t = Bb52.t[!is.na(Bb52.t$IA),]
+
+Bb45.i = Bb45.i[!is.na(Bb45.i$IA),]
+Bb45.m = Bb45.m[!is.na(Bb45.m$IA),]
+Bb45.t = Bb45.t[!is.na(Bb45.t$IA),]
+
+Bb52b.i = Bb52b.i[!is.na(Bb52b.i$IA),]
+Bb52b.m = Bb52b.m[!is.na(Bb52b.m$IA),]
+Bb52b.t = Bb52b.t[!is.na(Bb52b.t$IA),]
+
+      #Runs the qq plot for each breath type and individual to confirm linearity. 
+ggqqplot(Mn44.i$IA)
+ggqqplot(Mn44.m$IA)
+ggqqplot(Mn44.t$IA)
+
+ggqqplot(Mn10.i$IA)
+ggqqplot(Mn10.m$IA)
+ggqqplot(Mn10.t$IA)
+
+ggqqplot(Bb55b.i$IA)
+ggqqplot(Bb55b.m$IA)
+ggqqplot(Bb55b.t$IA)
+
+ggqqplot(Bb52.i$IA)
+ggqqplot(Bb52.m$IA)
+ggqqplot(Bb52.t$IA)
+
+ggqqplot(Bb45.i$IA)
+ggqqplot(Bb45.m$IA)
+ggqqplot(Bb45.t$IA)
+
+ggqqplot(Bb52b.i$IA)
+ggqqplot(Bb52b.m$IA)
+ggqqplot(Bb52b.t$IA)
+
+      #Confirming linearity for inhalation duration 
+out = dat
+out = out[!is.na(out$inhaledur),]
+
+out.i = out %>%
+  filter(breath_type == "Initial")
+out.m = out %>%
+  filter(breath_type == "Middle")
+out.t = out %>%
+  filter(breath_type == "Terminal")
+
+ggqqplot(out.i$inhaledur)
+ggqqplot(out.m$inhaledur)
+ggqqplot(out.t$inhaledur)
+
+    #Testing for homogeneity of variance - integrated area. 
+  #Mn44
+sd(Mn44.i$IA)^2
+sd(Mn44.m$IA)^2
+sd(Mn44.t$IA)^2
+  #Mn10
+sd(Mn10.i$IA)^2 
+sd(Mn10.m$IA)^2
+sd(Mn10.t$IA)^2
+  #Bb55b
+sd(Bb55b.i$IA)^2
+sd(Bb55b.m$IA)^2
+sd(Bb55b.t$IA)^2
+  #Bb52
+sd(Bb52.i$IA)^2
+sd(Bb52.m$IA)^2
+sd(Bb52.t$IA)^2 
+  #Bb45
+sd(Bb45.i$IA)^2
+sd(Bb45.m$IA)^2 
+sd(Bb45.t$IA)^2 
+  #Bb52b
+sd(Bb52b.i$IA)^2
+sd(Bb52b.m$IA)^2 
+sd(Bb52b.t$IA)^2 
+
+    #Testing for homogeneity of variance for inhalation duration
+sd(out.i$inhaledur)^2 
+sd(out.m$inhaledur)^2
+sd(out.t$inhaledur)^2
+
+# Hypothesis 1: IA, maximum area, and inhale duration vary by breath type, terminal greatest ---------
+ 
+##Figure 2 -----------------------------------------------------------------------------------------
+dat.c = read.csv("Inhale Curves Supplementary File 2.csv") #reads data for frame area over time data
+
+
+dat.c <- dat.c %>%
+  mutate(x = paste(Animal, Breath_code))%>%
+  group_by(x) %>%
+  mutate(norm_t = Time_value/(max(Time_value, na.rm = TRUE)), norm_a = Area/max(Area, na.rm = TRUE)) %>%
+  ungroup()
+
+flow <- read.csv("Inspiration Rate Supplementary File 3.csv") #reads data based on plots made by Sumich, 2001
+flow <- flow %>%
+  mutate(zero_t = time - 0.8975,
+         norm_t = zero_t/max(zero_t), 
+         flow_p = flow*-1, 
+         flow_np = flow_p/max(flow_p))
+
+#MN161117-10 panel
+mean_I <- dat.c %>%
+  filter(Animal == "mn161117-10", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "mn161117-10", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "mn161117-10", Breath_type == "Terminal") %>%
+  group_by(x)
+
+mn10 <- dat.c %>%
+  filter(Animal == 'mn161117-10',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("",sec.axis = sec_axis(~., name = ""))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("Normalized Inhalation Duration")+
+  ylab("")+
+  theme(axis.text.y = element_blank())
+
+#Bb180304-45 panel
+mean_I <- dat.c %>%
+  filter(Animal == "bb180304-45", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "bb180304-45", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "bb180304-45", Breath_type == "Terminal") %>%
+  group_by(x)
+
+
+bb45 <- dat.c %>%
+  filter(Animal == 'bb180304-45',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("Normalized Frame Area",sec.axis = sec_axis(~., name = ""))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("")+
+  ylab("Normalized Frame Area")+
+  theme(axis.text.x = element_blank())
+
+#Bb190224-52 panel
+mean_I <- dat.c %>%
+  filter(Animal == "bb190224-52", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "bb190224-52", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "bb190224-52", Breath_type == "Terminal") %>%
+  group_by(x)
+
+bb52 <- dat.c %>%
+  filter(Animal == 'bb190224-52',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("",sec.axis = sec_axis(~., name = ""))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("")+
+  ylab("")+
+  theme(axis.text.y = element_blank(), 
+        axis.text.x = element_blank())
+
+#Bb190228-55b panel
+mean_I <- dat.c %>%
+  filter(Animal == "bb190228-55b", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "bb190228-55b", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "bb190228-55b", Breath_type == "Terminal") %>%
+  group_by(x)
+
+bb55 <- dat.c %>%
+  filter(Animal == 'bb190228-55b',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("",sec.axis = sec_axis(~., name = "Normalized Flow Rate"))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("")+
+  ylab("")+
+  theme(axis.text.y = element_blank(),
+        axis.text.x = element_blank())
+
+#Bb190309-52 panel
+mean_I <- dat.c %>%
+  filter(Animal == "bb190309-52", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "bb190309-52", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "bb190309-52", Breath_type == "Terminal") %>%
+  group_by(x)
+
+bb52b <- dat.c %>%
+  filter(Animal == 'bb190309-52',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("Normalized Frame Area",sec.axis = sec_axis(~., name = ""))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("Normalized Inhalation Duration")+
+  ylab("Normalized Frame Area")
+
+#Mn180607-44 panel
+mean_I <- dat.c %>%
+  filter(Animal == "Mn180607-44", Breath_type == "Initial") %>%
+  group_by(x)
+mean_M <- dat.c %>%
+  filter(Animal == "Mn180607-44", Breath_type == "Middle") %>%
+  group_by(x)
+mean_T <- dat.c %>%
+  filter(Animal == "Mn180607-44", Breath_type == "Terminal") %>%
+  group_by(x)
+
+mn44 <- dat.c %>%
+  filter(Animal == 'Mn180607-44',
+         Breath_type == "Initial" | Breath_type =="Middle" | Breath_type == "Terminal")%>%
+  group_by(Breath_type)%>%
+  ggplot(dat.c, mapping = aes(x = norm_t, y = norm_a))+
+  geom_line(aes(color = Breath_type), alpha = 0.2, size = 1)+
+  scale_y_continuous("",sec.axis = sec_axis(~., name = "Normalized Flow Rate"))+
+  geom_smooth(flow, se = FALSE, mapping = aes(x = norm_t, y = flow_np), color = "grey40")+
+  geom_smooth(mean_I, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color ="#E69F00" ))+
+  geom_smooth(mean_M, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#56B4E9"))+
+  geom_smooth(mean_T, se = FALSE, mapping = aes(x = norm_t, y = norm_a, color = "#009E73"))+
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73","#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "none")+
+  xlab("Normalized Inhalation Duration")+
+  ylab("")+
+  theme(axis.text.y = element_blank())
+
+ggarrange(bb45, bb52, bb55, bb52b, mn10, mn44, labels = c("bb180304-45","bb190224-52", "bb190228-55b","bb190309-52", "mn161117-10","mn180607-44"), ncol = 3, nrow = 2, common.legend = TRUE, legend = "right")
+ggsave("figure 2.pdf", height = 240, width = 425, units = "mm")
+
+##Figure 3 -------------------------------------------------------------------------------------------
+g <- dat %>% 
+  fill(individualID) %>%
+  rename(`Normalized Integrated Area` = SIA,
+         `Inhalation Duration (s)` = inhaledur, 
+         `Normalized Maximum Nares Expansion` = NMA) %>% 
+  pivot_longer(cols = c("Normalized Integrated Area", "Inhalation Duration (s)", "Normalized Maximum Nares Expansion"),
+               names_to = "response",
+               values_to = "value") %>% 
+  filter(breath_type == "Initial"| breath_type == "Middle"| breath_type == "Terminal") %>%
+  ggplot(aes(x = breath_type, y = value, fill = individualID, na.rm = TRUE)) +
+  geom_boxplot(na.rm = TRUE) +
+  facet_wrap(vars(response), ncol = 1, scales = "free_y", strip.position = "left") +
+  theme_minimal(base_size = 14) +
+  theme(axis.title = element_blank(),
+        legend.position = "right",
+        strip.placement = "outside")+
+  labs(fill = 'Individual ID')+
+  scale_fill_manual(values = c("lightblue1", "steelblue4", "seagreen",  '#44AA99', "darkgoldenrod1", "gold1"))
+g
+ggsave("Figure 3.svg", height = 300, width = 350, units = "mm")
+
+# GLMM Inhalation Duration
+id_lme<- glmmTMB(inhaledur ~ breath_type + (1|individualID), data = dat, family = Gamma(link = "log"))
+summary(id_lme) #provides AIC and Log Likelihood
+predict2 <- ggpredict(id_lme, terms = "breath_type [all]") #obtain confidence intervals per predictor category
+car::Anova(id_lme) #overall fixed effects inference (p-values)
+
+marginal=lsmeans(id_lme, ~breath_type) #finds the least squared means
+as.data.frame(marginal)$breath_type #Lists the levels 
+
+#Initial vs. Terminal
+contr = list("Initial vs Terminal" = c(-1,0,1))
+contrast(marginal,contr)
+
+#Initial vs. Middle
+contr = list("Initial vs Middle" = c(-1,1,0))
+contrast(marginal,contr)
+
+#Terminal vs. Middle
+contr = list("Terminal vs Middle" = c(0,1,-1))
+contrast(marginal,contr)
+
+# GLMM sIA
+sia_lme <- glmmTMB(SIA ~ breath_type + (1|individualID), data = mutate(dat, SIA = pmin(SIA, 0.9999)), family = beta_family(link = "logit"))
+summary(sia_lme)
+predict3 <- ggpredict(sia_lme, terms = "breath_type")
+car::Anova(sia_lme)
+
+marginal=lsmeans(sia_lme, ~breath_type) #finds the least squared means
+as.data.frame(marginal)$breath_type #Lists the levels 
+
+  #Initial vs. Terminal
+contr = list("Initial vs Terminal" = c(-1,0,1))
+contrast(marginal,contr)
+
+  #Initial vs. Middle
+contr = list("Initial vs Middle" = c(-1,1,0))
+contrast(marginal,contr)
+
+  #Terminal vs. Middle
+contr = list("Terminal vs Middle" = c(0,1,-1))
+contrast(marginal,contr)
+
+  # GLMM maximum nares expansion
+area_lme<- glmmTMB(NMA ~ breath_type + (1|individualID), data = mutate(dat, NMA = pmin(NMA, 0.9999)), family = beta_family(link = "logit"))
+summary(area_lme)
+predict4 <- ggpredict(area_lme, terms = "breath_type")
+car::Anova(area_lme)
+
+marginal=lsmeans(area_lme, ~ breath_type) #finds the least squared means
+as.data.frame(marginal)$breath_type #Lists the levels 
+
+  #Initial vs. Terminal
+contr = list("Initial vs Terminal" = c(-1,0,1))
+contrast(marginal,contr)
+
+  #Initial vs. Middle
+contr = list("Initial vs Middle" = c(-1,1,0))
+contrast(marginal,contr)
+
+  #Terminal vs. Middle
+contr = list("Terminal vs Middle" = c(0,1,-1))
+contrast(marginal,contr)
+
+  ##Table 4 -----------------------------------------------------------------------------------------
+dat.summary <- dat %>% 
+  group_by(individualID, breath_type) %>%
+  filter(breath_type == "Initial"| breath_type == "Middle"| breath_type == "Terminal") %>%
+  summarise(mean.max = mean(NMA, na.rm = TRUE),
+            sd.max = sd(NMA, na.rm = TRUE),
+            n.max = sum(!is.na(NMA)),
+            mean.IA = mean(SIA, na.rm = TRUE),
+            sd.IA = sd(SIA, na.rm = TRUE),
+            n.IA = sum(!is.na(SIA)),
+            mean.dur = mean(inhaledur, na.rm = TRUE), 
+            sd.dur = sd(inhaledur, na.rm = TRUE), 
+            n.dur = sum(!is.na(inhaledur))
+            )
+
+### Maximum nares expansion vs. inhale duration 
+  #Model for max area vs. inhale duration
+mod <- glmmTMB(NMA ~ inhaledur + species + (1|individualID), 
+               data = mutate(dat, NMA = pmin(NMA, 0.9999)), 
+               family = beta_family(link = "logit"))
+summary(mod)
+confint(mod, level = 0.95, method = "wald", full = TRUE) #finds the confidence intervals
+
+  ##Figure 4 -----------------------------------------------------------------------------------------
+predict1 <- ggpredict(mod, 
+                     terms = c("inhaledur [all]", "species")) %>% 
+  rename(species = group,
+         inhaledur = x) %>% 
+  filter(species == "mn" | inhaledur < 1.1)
+
+predict1 %>% group_by(species) %>% summarise(m = median(inhaledur)) #used to find the slope at the median for reported effect sizes
+
+area_InDur <- ggplot(dat, aes(inhaledur, NMA)) +
+  geom_point(aes(color = breath_type), shape = 19, alpha = 0.5, size = 1.2) +
+  geom_line(aes(y = predicted), predict1, size = 0.6) +
+  facet_grid(cols = vars(species), scales = "free_x") +
+  expand_limits(x = 0, y = 0) +
+  ylab("Normalized Maximum Nares Area") + 
+  xlab("Inhalation Duration (s)")+
+  labs(color = "Breath Type")+
+  theme_minimal() +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73"))+
+  theme(legend.position = "right")
+
+ggsave("Figure 4.pdf", plot = area_InDur,
+       height = 150, width = 200, units = "mm")
+
+# Hypothesis 2: Dive Parameters --------------------------------------------------------------------
+  #Sums of all breath durations and IA
+dat2 <- read_csv("E:/Nares expansion and breath variability/Paper/Revisions for PeerJ/Final Submission Docs/Revised Analysis Files/Figure 5 Supplementary File 4.csv")
+
+dat2 <- dat2 %>% #removes surface intervals where the inhale duration for one breath was NA
+  group_by(individualID, surface_num) %>%
+  mutate(any_na = any(is.na(inhaledur))) %>%
+  filter(!any_na)
+
+dat.sum <- dat2 %>% 
+  group_by(individualID, surface_num) %>%
+  summarise(species = unique(species), 
+            breath.n = max(breath_num, na.rm = TRUE),
+            sum.dur = sum(inhaledur, na.rm = TRUE), 
+            prev.dur = max(prev_divedur, na.rm = TRUE), 
+            follow.dur = max(following_divedur, na.rm = TRUE))
+ 
+dat.no.T <- dat2 %>% #This isolates just the max number of lunges from the previous dive (from the initial breath)
+  filter(breath_type != "Terminal") %>%
+  group_by(individualID, surface_num) %>%
+  summarise(prev.lunge.1 = max(lungenum, na.rm = TRUE))
+
+
+dat.sum['prev.lunge'] = dat.no.T['prev.lunge.1'] #adds the previous lunges to the summary dataframe
+
+dat.no.I <- dat2 %>% #This isolates just the max number of lunges from the following dive (from the terminal breath)
+  filter(breath_type != "Initial") %>%
+  group_by(individualID, surface_num) %>%
+  summarise(follow.lunge.1 = max(lungenum, na.rm = TRUE))
+
+dat.sum['follow.lunge'] = dat.no.I['follow.lunge.1']
+
+#LMEM Testing (linearity and homogeneity of variance)
+Mn44 = dat.sum %>%
+  filter(individualID == "mn180607-44")
+Mn10 = dat.sum %>% 
+  filter(individualID == "mn161117-10")
+Bb55b = dat.sum %>%
+  filter(individualID == "bb190228-55b")
+Bb52 = dat.sum %>%
+  filter(individualID == "bb190309-52")
+Bb45 = dat.sum %>%
+  filter(individualID == "bb180304-45")
+Bb52b = dat.sum %>%
+  filter(individualID == "bb190224-52")
+ 
+ #Linearity -  mix of normal and non-normal distributions. Further confirms the use of a generalized model
+dat.sum$follow.dur <- as.numeric(dat.sum$follow.dur)
+dat.sum$prev.dur <- as.numeric(dat.sum$prev.dur)
+
+ggqqplot(Bb45$sum.IA)
+shapiro.test(Bb45$sum.IA)
+ggqqplot(Bb52$sum.IA)
+shapiro.test(Bb52$sum.IA)
+ggqqplot(Bb52b$sum.IA)
+shapiro.test(Bb52b$sum.IA)
+ggqqplot(Bb55b$sum.IA)
+shapiro.test(Bb55b$sum.IA)
+ggqqplot(Mn10$sum.IA)
+shapiro.test(Mn10$sum.IA)
+ggqqplot(Mn44$sum.IA)
+shapiro.test(Mn44$sum.IA)
+
+#Homogeneity of variance 
+sd(dat.sum$sum.dur)
+
+#Models - critical p value is 0.0125 (accounts for the 4 hypotheses)
+#Dive Duration - Previous
+id_dur2 <- glmmTMB(sum.dur ~ poly(prev.dur, 2) + (1|individualID) + (1|species), data = dat.sum, family = Gamma(link = "log"))
+summary(id_dur2) 
+confint(id_dur2, level = 0.95, method = "wald", full = TRUE)
+
+predict5 <- ggpredict(id_dur2, terms = c("prev.dur [all]")) #used to find the slope at the median for reported effect sizes
+predict5 %>% summarise(m = median(x)) 
+
+#Number of Lunges - Previous 
+id_lunge2 <- glmmTMB(sum.dur ~ poly(prev.lunge, 2) + (1|individualID)+ (1|species), data = dat.sum, family = Gamma(link = "log"))
+summary(id_lunge2) 
+confint(id_lunge2, level = 0.95, method = "wald", full = TRUE)
+
+predict6 <- ggpredict(id_lunge2, terms = c("prev.lunge [all]")) #used to find the slope at the median for reported effect sizes
+predict6 %>% summarise(m = median(x)) 
+
+#Dive Duration - following
+id_dur2 <- glmmTMB(sum.dur ~ poly(follow.dur, 2) + (1|individualID)+ (1|species), data = dat.sum,family = Gamma(link = "log"))
+summary(id_dur2) 
+confint(id_dur2, level = 0.95, method = "wald", full = TRUE)
+
+predict7 <- ggpredict(id_dur2, terms = c("follow.dur [all]")) #used to find the slope at the median for reported effect sizes
+predict7 %>% summarise(m = median(x))
+
+#Number of Lunges - following 
+id_lunge2 <- glmmTMB(sum.dur ~ poly(follow.lunge, 2) + (1|individualID)+ (1|species), data = dat.sum, family = Gamma(link = "log"))
+summary(id_lunge2) 
+confint(id_lunge2, level = 0.95, method = "wald", full = TRUE)
+
+predict8 <- ggpredict(id_lunge2, terms = c("follow.lunge [all]")) #used to find the slope at the median for reported effect sizes
+predict8 %>% summarise(m = median(x))
+
+#Dive duration & lunges - following
+id_dur_lunge2 <- glmmTMB(sum.dur ~ poly(follow.dur, 2) + poly(follow.lunge, 2) + (1|individualID) + (1|species), data = dat.sum, family = Gamma(link = "log"))
+summary(id_dur_lunge2)
+confint(id_dur_lunge2, level = 0.95, method = "wald", full = TRUE) #finds the confidence intervals
+
+predict9 <- ggpredict(id_dur_lunge2, terms = c("follow.dur [all]")) #used to find the slope at the median for reported effect sizes
+predict9 %>% summarise(m = median(x))
+
+  ##Model validation --------------------------------------------------------------------------------
+
+# check residuals
+par(mfrow=c(2,2),mar=c(6,5,6,3))
+qqnorm(resid(id_dur_lunge2))
+qqline(resid(id_dur_lunge2))
+# qq.gam(m,cex=1,pch=20)
+hist(residuals(id_dur_lunge2), xlab="Residuals", main="Histogram \nof residuals")
+observed.y <- dat.sum$follow.dur
+plot(fitted(id_dur_lunge2), observed.y, pch=20, xlab = "Fitted Values",
+     ylab = "Observations", main = "Observations \nvs. Fitted Values")
+acf(resid(id_dur_lunge2),lag.max=200, 
+    main="Temporal \nautocorrelation")
+
+# plot response curves
+?plot_model
+plot_model(id_dur_lunge2, type = "est", sort.est = TRUE,     # plot x variables with pvalues
+           show.values = TRUE, value.offset = .3)                                # plot random effect
+plot_model(id_dur_lunge2, type = "pred", terms = c("follow.lunge[all]"))       # plot X1 (following dive duration) vs Y
+plot_model(id_dur_lunge2, type = "pred", terms = c("follow.lunge", "individualID", "species"), ci.lvl = NA) # plot X1 (following dive duration) vs Y with random effects (ID and spp)
+
+
+##Figure 5 - total inhale duration -----------------------------------------------------------------
+dat.sum <- dat.sum %>% 
+  mutate(
+    cat = case_when(
+      follow.lunge == 0 ~ "Non-Foraging",
+      follow.lunge < 5 & species == "bb" ~ "Moderate",
+      follow.lunge < 3 & species == "mn" ~ "Moderate",
+      TRUE ~ "High"
+    ),
+    cat = factor(cat, levels = c("Non-Foraging", "Moderate", "High"))
+  )
+
+inhale_grid <- expand_grid(
+  follow.dur = seq(0, 
+                   max(dat.sum$follow.dur, na.rm = TRUE), 
+                   length.out = 20),
+  cat = c("Non-Foraging", "Moderate", "High"),
+  species = c("bb", "mn")
+) %>% 
+  mutate(individualID = "new",
+         follow.lunge = case_when(
+           cat == "Non-Foraging" ~ 0,
+           cat == "Moderate" & species == "bb" ~ 2.5,
+           cat == "Moderate" & species == "mn" ~ 1.5,
+           cat == "High" & species == "bb" ~ 6.5
+         ),
+         cat = factor(cat, levels = c("Non-Foraging", "Moderate", "High"))) %>% 
+  filter(!(cat == "High" & species == "mn"))
+
+inhale_predictions <- inhale_grid %>% 
+  mutate(sum.dur = predict(id_dur_lunge2, 
+                           newdata = inhale_grid, 
+                           type = "response",
+                           allow.new.levels = TRUE,
+                           re.form = NA),
+         sum.dur.se = predict(id_dur_lunge2, 
+                              newdata = inhale_grid, 
+                              type = "response",
+                              allow.new.levels = TRUE,
+                              re.form = NA,
+                              se.fit = TRUE)[[2]])
+
+dur_ID <- dat.sum %>%
+  ggplot(aes(x = follow.dur, y = sum.dur, color = cat)) +
+  geom_point(na.rm = TRUE, shape = 20, size = 3, alpha = 0.65, show.legend = TRUE) +
+  geom_line(data = inhale_predictions) +
+  geom_line(aes(y = sum.dur - 1.96 * sum.dur.se), 
+            inhale_predictions, 
+            linetype = "dashed") +
+  geom_line(aes(y = sum.dur + 1.96 * sum.dur.se), 
+            inhale_predictions, 
+            linetype = "dashed") +
+  facet_grid(rows = vars(species),
+             cols = vars(cat),
+             scales = "free_x")+
+  expand_limits(x = 0, y = 0)+
+  ylab("Total Inhale Duration (s)") + 
+  xlab("Upcoming Dive Duration (s)")+
+  scale_color_manual(values = c(`Non-Foraging` = "#E69F00", 
+                                Moderate = "#56B4E9",
+                                High = "#009E73")) +
+  labs(color = "") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.position = "none")
+dur_ID
+
+#Dive duration & lunges - breath count
+#Previous Dive Metrics
+breath_dur_lunge2.p <- glmmTMB(breath.n ~ poly(prev.dur, 2) + poly(prev.lunge, 2) + (1|individualID) + (1|species), data = dat.sum, family = compois(link = "log"))
+summary(breath_dur_lunge2.p)
+confint(breath_dur_lunge2.p, level = 0.95, method = "wald", full = TRUE)
+
+predict10 <- ggpredict(breath_dur_lunge2.p, terms = c("prev.dur [all]")) #used to find the slope at the median for reported effect sizes
+predict10 %>% summarise(m = median(x))
+
+#Upcoming Dive Metrics
+breath_dur_lunge2.u <- glmmTMB(breath.n ~ poly(follow.dur, 2) + poly(follow.lunge, 2) + (1|individualID) + (1|species), data = dat.sum, family = compois(link = "log"))
+summary(breath_dur_lunge2.u)
+confint(breath_dur_lunge2.u, level = 0.95, method = "wald", full = TRUE)
+
+predict11 <- ggpredict(breath_dur_lunge2.u, terms = c("follow.dur [all]")) #used to find the slope at the median for reported effect sizes
+predict11 %>% summarise(m = median(x))
+
+# check residuals
+par(mfrow=c(2,2),mar=c(6,5,6,3))
+qqnorm(resid(breath_dur_lunge2.u))
+qqline(resid(breath_dur_lunge2.u))
+# qq.gam(m,cex=1,pch=20)
+hist(residuals(breath_dur_lunge2.u), xlab="Residuals", main="Histogram \nof residuals")
+observed.y <- dat.sum$follow.dur
+plot(fitted(breath_dur_lunge2.u), observed.y, pch=20, xlab = "Fitted Values",
+     ylab = "Observations", main = "Observations \nvs. Fitted Values")
+acf(resid(id_dur_lunge2.u),lag.max=200, 
+    main="Temporal \nautocorrelation") 
+
+# plot response curves
+?plot_model
+plot_model(breath_dur_lunge2.u, type = "re", sort.est = TRUE,     # plot x variables with pvalues
+           show.values = TRUE, value.offset = .3)
+plot_model(breath_dur_lunge2.u, type = "re")                                  # plot random effect
+plot_model(breath_dur_lunge2.u, type = "pred", terms = c("follow.lunge[all]"))       # plot X1 (following dive duration) vs Y
+plot_model(breath_dur_lunge2.u, type = "pred", terms = c("follow.dur[all]","species")) # plot X1 (following dive duration) vs Y with random effects (ID and spp)
+
+#Figure 5b - breath count
+count_grid <- expand_grid(
+  follow.dur = seq(0, 
+                   max(dat.sum$follow.dur, na.rm = TRUE), 
+                   length.out = 20),
+  cat = c("Non-Foraging", "Moderate", "High"),
+  species = c("bb", "mn")
+) %>% 
+  mutate(individualID = "new",
+         follow.lunge = case_when(
+           cat == "Non-Foraging" ~ 0,
+           cat == "Moderate" & species == "bb" ~ 2.5,
+           cat == "Moderate" & species == "mn" ~ 1.5,
+           cat == "High" & species == "bb" ~ 6.5
+         ),
+         cat = factor(cat, levels = c("Non-Foraging", "Moderate", "High"))) %>% 
+  filter(!(cat == "High" & species == "mn"))
+
+count_predictions <- count_grid %>% 
+  mutate(breath.n = predict(breath_dur_lunge2.p, 
+                           newdata = count_grid, 
+                           type = "response",
+                           allow.new.levels = TRUE,
+                           re.form = NA),
+         breath.n.se = predict(breath_dur_lunge2.p, 
+                              newdata = count_grid, 
+                              type = "response",
+                              allow.new.levels = TRUE,
+                              re.form = NA,
+                              se.fit = TRUE)[[2]])
+
+count_dur <- dat.sum %>%
+  ggplot(aes(x = follow.dur, y = breath.n, color = cat)) +
+  geom_point(na.rm = TRUE, shape = 20, size = 3, alpha = 0.65, show.legend = TRUE) +
+  geom_line(data = count_predictions) +
+  geom_line(aes(y = breath.n - 1.96 * breath.n.se), 
+            count_predictions, 
+            linetype = "dashed") +
+  geom_line(aes(y = breath.n + 1.96 * breath.n.se), 
+            count_predictions, 
+            linetype = "dashed") +
+  facet_grid(rows = vars(species),
+             cols = vars(cat),
+             scales = "free_x")+
+  expand_limits(x = 0, y = 0)+
+  ylab("Breath Count") + 
+  xlab("Upcoming Dive Duration (s)")+
+  scale_color_manual(values = c(`Non-Foraging` = "#E69F00", 
+                                Moderate = "#56B4E9",
+                                High = "#009E73")) +
+  labs(color = "") +
+  theme(legend.position = "none")
+count_dur
+
+ggarrange(dur_ID, count_dur, common.legend = TRUE, legend = "none", nrow = 2)
+ggsave("Figure 5.svg", height = 290, width = 240, units = "mm")
